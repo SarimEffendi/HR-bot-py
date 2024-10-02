@@ -1,10 +1,11 @@
 # bot/highrise_bot.py
 import asyncio
-from highrise import BaseBot, __main__, CurrencyItem, Item, Position, AnchorPosition, SessionMetadata, User
+from highrise import BaseBot, __main__, CurrencyItem, Item, Position, SessionMetadata, User
 from highrise.__main__ import BotDefinition
 from utils.music_player import MusicPlayer
 from json import load, dump, JSONDecodeError
 import os
+import json
 
 class MyHighriseBot(BaseBot):
     def __init__(self):
@@ -15,14 +16,54 @@ class MyHighriseBot(BaseBot):
         self.bot_position = None
         self.load_tip_data()
 
+        # Load authorized users from config
+        try:
+            with open("config.json", "r") as config_file:
+                config = json.load(config_file)
+            self.owner_id = config.get("owner_id")
+            self.moderator_ids = set(config.get("moderator_ids", []))
+            print(f"Loaded owner_id: {self.owner_id}")
+            print(f"Loaded moderator_ids: {self.moderator_ids}")
+        except FileNotFoundError:
+            print("Error: config.json not found. Please create one with 'owner_id' and 'moderator_ids'.")
+            self.owner_id = None
+            self.moderator_ids = set()
+        except JSONDecodeError:
+            print("Error: config.json is not a valid JSON file.")
+            self.owner_id = None
+            self.moderator_ids = set()
+
     async def on_ready(self):
         try:
             print("Bot is ready and connected to the Highrise room!")
         except Exception as e:
             print(f"An error occurred in on_ready: {e}")
 
+    async def on_start(self, session_metadata: SessionMetadata) -> None:
+        try:
+            print("Bot Connected")
+            self.bot_id = session_metadata.user_id
+            # Start the repeating message loop
+            asyncio.create_task(self.send_repeating_message())
+        except Exception as e:
+            print(f"An error occurred during bot start: {e}")
+
+    async def send_repeating_message(self):
+        """
+        Send a message every 30 seconds.
+        """
+        while True:
+            try:
+                await self.highrise.chat("Just a reminder meow is very ugly 6/10")  # The message the bot sends every 30 seconds
+                await asyncio.sleep(30)  # Wait for 30 seconds before sending the message again
+            except Exception as e:
+                print(f"Error sending repeating message: {e}")
+
     async def on_chat(self, user: User, message: str) -> None:
         try:
+            # Log user information for debugging
+            print(f"User ID: {user.id}, Username: {user.username}")
+
             # Log chat messages
             self.chat_logs.append({"username": user.username, "message": message})
             print(f"Chat Log: {user.username}: {message}")
@@ -31,6 +72,12 @@ class MyHighriseBot(BaseBot):
             os.makedirs("logs", exist_ok=True)
             with open("logs/chat_logs.txt", "a", encoding="utf-8") as log_file:
                 log_file.write(f"{user.username}: {message}\n")
+
+            # Only process commands if the user is a mod or the room owner
+            if message.startswith("!"):
+                if not self.is_mod_or_owner(user):
+                    await self.highrise.chat("You don't have permission to use this command.")
+                    return
 
             # Handling different commands
             if message.startswith("!say "):
@@ -72,9 +119,70 @@ class MyHighriseBot(BaseBot):
                 set_position = await self.set_bot_position(user.id)
                 await self.highrise.chat(set_position)
 
+            elif message.startswith("!teleport "):
+                await self.handle_teleport_command(user, message)
+
         except Exception as e:
             print(f"An error occurred while processing the chat message: {e}")
             await self.highrise.chat("An error occurred while processing your request. Please try again.")
+
+    def is_mod_or_owner(self, user: User) -> bool:
+        """
+        Check if the user is a moderator or the room owner based on user IDs.
+        """
+        is_owner = user.id == self.owner_id
+        is_mod = user.id in self.moderator_ids
+        print(f"Permission Check - User: {user.username}, ID: {user.id}, Is Owner: {is_owner}, Is Mod: {is_mod}")
+        return is_owner or is_mod
+
+    async def handle_teleport_command(self, user: User, message: str) -> None:
+        """
+        Handle the !teleport command.
+        Usage: !teleport @username x y z facing
+        Example: !teleport @JohnDoe 10 20 30 FrontRight
+        """
+        try:
+            parts = message.split()
+            if len(parts) != 6:
+                await self.highrise.chat("Invalid command format. Use: !teleport @username x y z facing")
+                return
+
+            _, target_username, x, y, z, facing = parts
+            target_username = target_username.replace("@", "")
+
+            # Fetch all users in the room
+            room_users = await self.highrise.get_room_users()
+            target_user = next((u for u, _ in room_users.content if u.username.lower() == target_username.lower()), None)
+
+            if not target_user:
+                await self.highrise.chat(f"User '{target_username}' not found in the room.")
+                return
+
+            # Parse coordinates
+            try:
+                x = float(x)
+                y = float(y)
+                z = float(z)
+            except ValueError:
+                await self.highrise.chat("Coordinates must be valid numbers.")
+                return
+
+            # Validate facing direction
+            valid_facings = ["FrontRight", "FrontLeft", "BackRight", "BackLeft"]
+            if facing not in valid_facings:
+                await self.highrise.chat(f"Invalid facing direction. Valid options: {', '.join(valid_facings)}")
+                return
+
+            # Create new position
+            new_position = Position(x=x, y=y, z=z, facing=facing)
+
+            # Teleport the target user
+            await self.highrise.teleport(target_user.id, new_position)
+            await self.highrise.chat(f"Teleported {target_user.username} to ({x}, {y}, {z}) facing {facing}.")
+
+        except Exception as e:
+            print(f"An error occurred while handling the teleport command: {e}")
+            await self.highrise.chat("Failed to teleport the user. Please check the command format and try again.")
 
     async def on_tip(self, sender: User, receiver: User, tip: CurrencyItem | Item) -> None:
         try:
@@ -89,6 +197,7 @@ class MyHighriseBot(BaseBot):
 
     async def on_user_join(self, user: User, position: Position) -> None:
         try:
+            print(f"User Joined - ID: {user.id}, Username: {user.username}")
             greeting_message = f"Welcome to the room, {user.username}!"
             await self.highrise.chat(greeting_message)
             print(f"{user.username} joined the room")
@@ -100,13 +209,6 @@ class MyHighriseBot(BaseBot):
             print(f"{user.username} left the room")
         except Exception as e:
             print(f"An error occurred when handling user leave: {e}")
-
-    async def on_start(self, session_metadata: SessionMetadata) -> None:
-        try:
-            print("Bot Connected")
-            self.bot_id = session_metadata.user_id
-        except Exception as e:
-            print(f"An error occurred during bot start: {e}")
 
     def get_top_tippers(self):
         try:
