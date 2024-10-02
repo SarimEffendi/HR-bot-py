@@ -1,0 +1,5 @@
+highrise-bot-sdk
+ffmpeg-python
+pydub
+yt-dlp
+python-dotenv
