@@ -43,7 +43,8 @@ class MyHighriseBot(BaseBot):
         try:
             print("Bot Connected")
             self.bot_id = session_metadata.user_id
-            # Start the repeating message loop
+
+            # Start the repeating message loop after the bot starts
             asyncio.create_task(self.send_repeating_message())
         except Exception as e:
             print(f"An error occurred during bot start: {e}")
@@ -54,10 +55,15 @@ class MyHighriseBot(BaseBot):
         """
         while True:
             try:
-                await self.highrise.chat("Just a reminder meow is very ugly 6/10")  # The message the bot sends every 30 seconds
-                await asyncio.sleep(30)  # Wait for 30 seconds before sending the message again
+                # The message the bot sends every 30 seconds
+                # await self.highrise.chat("Just a reminder meow is very ugly 6/10")
+                # await self.highrise.chat("and lian is a heart broken asian")
+                await self.highrise.chat("Woof Woof! mommy meow")
+                await asyncio.sleep(15)  # Wait for 30 seconds before sending the message again
             except Exception as e:
                 print(f"Error sending repeating message: {e}")
+                # In case of error, we prevent breaking the loop
+                await asyncio.sleep(30)
 
     async def on_chat(self, user: User, message: str) -> None:
         try:
